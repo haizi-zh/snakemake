@@ -1421,9 +1421,20 @@ class KubernetesExecutor(ClusterExecutor):
     def unregister_secret(self):
         import kubernetes.client
 
-        self.kubeapi.delete_namespaced_secret(
+        func = lambda : self.kubeapi.delete_namespaced_secret(
             self.run_namespace, self.namespace, body=kubernetes.client.V1DeleteOptions()
         )
+
+        try:
+            func()
+        except kubernetes.client.rest.ApiException as e:
+            if e.status == 401:
+                # Unauthorized.
+                # Reload config in order to ensure token is
+                # refreshed. Then try again.
+                self._reauthenticate(func)
+            else:
+                raise
 
     def shutdown(self):
         self.unregister_secret()
@@ -1435,7 +1446,20 @@ class KubernetesExecutor(ClusterExecutor):
         body = kubernetes.client.V1DeleteOptions()
         with self.lock:
             for j in self.active_jobs:
-                self.kubeapi.delete_namespaced_pod(j.jobid, self.namespace, body=body)
+                func = lambda : self.kubeapi.delete_namespaced_pod(
+                    j.jobid, self.namespace, body=body)
+
+                try:
+                    func()
+                except kubernetes.client.rest.ApiException as e:
+                    if e.status == 401:
+                        # Unauthorized.
+                        # Reload config in order to ensure token is
+                        # refreshed. Then try again.
+                        self._reauthenticate(func)
+                    else:
+                        raise
+                
         self.shutdown()
 
     def run(self, job, callback=None, submit_callback=None, error_callback=None):
@@ -1609,7 +1633,7 @@ class KubernetesExecutor(ClusterExecutor):
                     # Unauthorized.
                     # Reload config in order to ensure token is
                     # refreshed. Then try again.
-                    self._reauthenticate(func)
+                    return self._reauthenticate(func)
                 else:
                     raise
             # Handling timeout that may occur in case of GKE master upgrade
