@@ -28,6 +28,8 @@ except ImportError as e:
 
 
 class RemoteProvider(AbstractRemoteProvider):
+    http_cache = {}
+
     def __init__(
         self, *args, keep_local=False, stay_on_remote=False, is_default=False, **kwargs
     ):
@@ -156,6 +158,13 @@ class RemoteObject(DomainObject):
 
     def exists(self):
         if self._matched_address:
+            import time
+
+            cache_results = self.provider.http_cache.get(self._file, {})
+            self.provider.http_cache[self._file] = cache_results
+            if ("exists" in cache_results) and (time.time() - cache_results.get("cache_time", 0) < 60):
+                return cache_results["exists"]
+
             with self.httpr(verb="HEAD") as httpr:
                 # if a file redirect was found
                 if httpr.status_code in range(300, 308):
@@ -163,7 +172,14 @@ class RemoteObject(DomainObject):
                         "The file specified appears to have been moved (HTTP %s), check the URL or try adding 'allow_redirects=True' to the remote() file object: %s"
                         % (httpr.status_code, httpr.url)
                     )
-                return httpr.status_code == requests.codes.ok
+                exists = (httpr.status_code == requests.codes.ok)
+                self.provider.http_cache[self._file]["exists"] = exists
+                self.provider.http_cache[self._file]["cache_time"] = time.time()
+                return exists
+
+            self.provider.http_cache[self._file]["exists"] = False
+            self.provider.http_cache[self._file]["cache_time"] = time.time()
+            logger.debug(f"Upddate cache/exists: {self._file}")
             return False
         else:
             raise HTTPFileException(
@@ -173,6 +189,13 @@ class RemoteObject(DomainObject):
 
     def mtime(self):
         if self.exists():
+            import time
+
+            cache_results = self.provider.http_cache.get(self._file, {})
+            self.provider.http_cache[self._file] = cache_results
+            if ("mtime" in cache_results) and (time.time() - cache_results.get("cache_time", 0) < 60):
+                return cache_results["mtime"]
+
             with self.httpr(verb="HEAD") as httpr:
 
                 file_mtime = self.get_header_item(httpr, "last-modified", default=None)
@@ -191,6 +214,9 @@ class RemoteObject(DomainObject):
                     else:
                         epochTime = email.utils.mktime_tz(modified_tuple)
 
+                self.provider.http_cache[self._file]["mtime"] = epochTime
+                self.provider.http_cache[self._file]["cache_time"] = time.time()
+                logger.debug(f"Upddate cache/mtime: {self._file}")
                 return epochTime
         else:
             raise HTTPFileException(
@@ -199,12 +225,22 @@ class RemoteObject(DomainObject):
 
     def size(self):
         if self.exists():
+            import time
+
+            cache_results = self.provider.http_cache.get(self._file, {})
+            self.provider.http_cache[self._file] = cache_results
+            if ("size" in cache_results) and (time.time() - cache_results.get("cache_time", 0) < 60):
+                return cache_results["size"]
+
             with self.httpr(verb="HEAD") as httpr:
 
                 content_size = int(
                     self.get_header_item(httpr, "content-size", default=0)
                 )
 
+                self.provider.http_cache[self._file]["size"] = content_size
+                self.provider.http_cache[self._file]["cache_time"] = time.time()
+                logger.debug(f"Upddate cache/size: {self._file}")
                 return content_size
         else:
             return self._iofile.size_local
