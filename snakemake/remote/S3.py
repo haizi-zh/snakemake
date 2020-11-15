@@ -15,6 +15,8 @@ from snakemake.remote import AbstractRemoteObject, AbstractRemoteProvider
 from snakemake.exceptions import WorkflowError, S3FileException
 from snakemake.utils import os_sync
 
+from snakemake.logging import logger
+
 try:
     # third-party modules
     import boto3
@@ -76,6 +78,7 @@ class RemoteObject(AbstractRemoteObject):
 
     def exists(self):
         if self._matched_s3_path:
+            # logger.info(f"S3 exists: s3://{self.s3_bucket}/{self.s3_key}")
             return self._s3c.exists_in_bucket(self.s3_bucket, self.s3_key)
         else:
             raise S3FileException(
@@ -147,8 +150,11 @@ class RemoteObject(AbstractRemoteObject):
                 % self.local_file()
             )
 
-
 class S3Helper(object):
+    # Create a cache to speed up S3 access
+    s3_cache = {}
+    s3 = None
+
     def __init__(self, *args, **kwargs):
         # as per boto, expects the environment variables to be set:
         # AWS_ACCESS_KEY_ID
@@ -169,6 +175,35 @@ class S3Helper(object):
             kwargs["endpoint_url"] = kwargs.pop("host")
 
         self.s3 = boto3.resource("s3", **kwargs)
+        S3Helper.s3 = self.s3
+
+
+    @classmethod
+    def retrieve_cache(cls, bucket_name):
+        import time
+
+        bucket_cache = cls.s3_cache.get(bucket_name)
+        delta_time = None
+        if bucket_cache:
+            current = time.time()
+            cache_time = bucket_cache["cache_time"]
+            delta_time = current - cache_time
+
+            # default cache expiration: 60 sec
+            if delta_time < 60:
+                return bucket_cache["contents"]
+
+        # Update cache
+        logger.debug(f"Update S3 cache: {bucket_name}")
+        logger.debug(f"Reason: cache exists: {bucket_cache is not None}, delta_time: {delta_time}")
+        b = cls.s3.Bucket(bucket_name)
+        bucket_objects = {o.key: o for o in b.objects.iterator()}
+        cls.s3_cache[bucket_name] = {
+            "contents": bucket_objects,
+            "cache_time": time.time()
+            }
+        logger.debug(f"Cacche updated: {bucket_name}")
+        return cls.s3_cache[bucket_name]["contents"]
 
     def bucket_exists(self, bucket_name):
         try:
@@ -325,14 +360,16 @@ class S3Helper(object):
         assert bucket_name, "bucket_name must be specified"
         assert key, "Key must be specified"
 
-        try:
-            self.s3.Object(bucket_name, key).load()
-        except botocore.exceptions.ClientError as e:
-            if e.response["Error"]["Code"] == "404":
-                return False
-            else:
-                raise
-        return True
+        return key in self.retrieve_cache(bucket_name).keys()
+
+        # try:
+        #     self.s3.Object(bucket_name, key).load()
+        # except botocore.exceptions.ClientError as e:
+        #     if e.response["Error"]["Code"] == "404":
+        #         return False
+        #     else:
+        #         raise
+        # return True
 
     def key_size(self, bucket_name, key):
         """Returns the size of a key based on a HEAD request
@@ -347,9 +384,11 @@ class S3Helper(object):
         assert bucket_name, "bucket_name must be specified"
         assert key, "Key must be specified"
 
-        k = self.s3.Object(bucket_name, key)
+        return self.retrieve_cache(bucket_name)[key].size // 1024
 
-        return k.content_length // 1024
+        # k = self.s3.Object(bucket_name, key)
+
+        # return k.content_length // 1024
 
     def key_last_modified(self, bucket_name, key):
         """Returns a timestamp of a key based on a HEAD request
@@ -364,10 +403,12 @@ class S3Helper(object):
         assert bucket_name, "bucket_name must be specified"
         assert key, "Key must be specified"
 
-        k = self.s3.Object(bucket_name, key)
+        return self.retrieve_cache(bucket_name)[key].last_modified.timestamp()
 
-        return k.last_modified.timestamp()
+        # k = self.s3.Object(bucket_name, key)
+
+        # return k.last_modified.timestamp()
 
     def list_keys(self, bucket_name):
-        b = self.s3.Bucket(bucket_name)
-        return [o.key for o in b.objects.iterator()]
+        return list(self.retrieve_cache(bucket_name).keys())
+
