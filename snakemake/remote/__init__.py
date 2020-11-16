@@ -14,6 +14,9 @@ import copy
 # module-specific
 import snakemake.io
 
+from snakemake.exceptions import WorkflowError
+from snakemake.logging import logger
+
 
 class StaticRemoteObjectProxy(ObjectProxy):
     """Proxy that implements static-ness for remote objects.
@@ -51,14 +54,53 @@ class AbstractRemoteProvider:
     supports_default = False
     allows_directories = False
 
+    # Cache should be static and global, to reduce potential redundancy
+    cache = {}
+
+    @classmethod
+    def update_cache(cls, cache_name, key, data):
+        import time
+
+        cls.cache[cache_name][key] = {"data": data, "cache_ts": time.time()}
+
+    @classmethod
+    def retrieve_cache(cls, cache_name, key, cache_ttl, func=None):
+        import time
+
+        # Try retrieve cache entry
+        if key in cls.cache[cache_name]:
+            contents = cls.cache[cache_name][key]
+            current_ts = time.time()
+            if current_ts - contents["cache_ts"] < cache_ttl:
+                return contents["data"]
+        
+        if func is not None:
+            # Cache missed. Try retrieving the data and update
+            data = func()
+            # logger.debug(f"Update cache: {cache_name} : {key}")
+            cls.update_cache(cache_name, key, data)
+            return data
+
     def __init__(
-        self, *args, keep_local=False, stay_on_remote=False, is_default=False, **kwargs
+        self, *args, keep_local=False, stay_on_remote=False, is_default=False, 
+        enable_cache=False, cache_name=None, cache_ttl=60, **kwargs
     ):
         self.args = args
         self.stay_on_remote = stay_on_remote
         self.keep_local = keep_local
         self.is_default = is_default
         self.kwargs = kwargs
+
+        self.enable_cache = enable_cache
+        if self.enable_cache:
+            # Enable cache mechanism
+            self.cache_name = cache_name
+            # Default cache TTL: 30 seconds
+            self.cache_ttl = cache_ttl
+            type(self).cache[self.cache_name] = {}
+
+            provider_name = self.cache_name + (" (default)" if self.is_default else "")
+            logger.info(f"Cache initialized for RemoteProvider {provider_name}. Cache TTL: {self.cache_ttl} seconds")
 
     def remote(
         self, value, *args, keep_local=None, stay_on_remote=None, static=False, **kwargs

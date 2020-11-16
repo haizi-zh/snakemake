@@ -28,16 +28,19 @@ except ImportError as e:
 
 
 class RemoteProvider(AbstractRemoteProvider):
-    http_cache = {}
-
     def __init__(
-        self, *args, keep_local=False, stay_on_remote=False, is_default=False, **kwargs
+        self, *args, keep_local=False, stay_on_remote=False, is_default=False, 
+        enable_cache=False, cache_name="HTTP", cache_ttl=60,
+        **kwargs
     ):
         super(RemoteProvider, self).__init__(
             *args,
             keep_local=keep_local,
             stay_on_remote=stay_on_remote,
             is_default=is_default,
+            enable_cache=enable_cache,
+            cache_name=cache_name,
+            cache_ttl=cache_ttl,
             **kwargs
         )
 
@@ -157,14 +160,9 @@ class RemoteObject(DomainObject):
         r.close()
 
     def exists(self):
-        if self._matched_address:
-            import time
+        matched_addr = self._matched_address
 
-            cache_results = self.provider.http_cache.get(self._file, {})
-            self.provider.http_cache[self._file] = cache_results
-            if ("exists" in cache_results) and (time.time() - cache_results.get("cache_time", 0) < 60):
-                return cache_results["exists"]
-
+        def retrieval_func():
             with self.httpr(verb="HEAD") as httpr:
                 # if a file redirect was found
                 if httpr.status_code in range(300, 308):
@@ -172,15 +170,17 @@ class RemoteObject(DomainObject):
                         "The file specified appears to have been moved (HTTP %s), check the URL or try adding 'allow_redirects=True' to the remote() file object: %s"
                         % (httpr.status_code, httpr.url)
                     )
-                exists = (httpr.status_code == requests.codes.ok)
-                self.provider.http_cache[self._file]["exists"] = exists
-                self.provider.http_cache[self._file]["cache_time"] = time.time()
-                return exists
-
-            self.provider.http_cache[self._file]["exists"] = False
-            self.provider.http_cache[self._file]["cache_time"] = time.time()
-            logger.debug(f"Upddate cache/exists: {self._file}")
+                return httpr.status_code == requests.codes.ok
             return False
+
+        if matched_addr:
+            provider = self.provider
+            is_existed = False
+            if provider.enable_cache:
+                key = f"EXISTS:{matched_addr.group()}"
+                return provider.retrieve_cache(provider.cache_name, key, provider.cache_ttl, retrieval_func)
+            else:
+                return retrieval_func()
         else:
             raise HTTPFileException(
                 "The file cannot be parsed as an HTTP path in form 'host:port/abs/path/to/file': %s"
@@ -188,18 +188,10 @@ class RemoteObject(DomainObject):
             )
 
     def mtime(self):
-        if self.exists():
-            import time
-
-            cache_results = self.provider.http_cache.get(self._file, {})
-            self.provider.http_cache[self._file] = cache_results
-            if ("mtime" in cache_results) and (time.time() - cache_results.get("cache_time", 0) < 60):
-                return cache_results["mtime"]
-
+        def retrieval_func():
             with self.httpr(verb="HEAD") as httpr:
 
                 file_mtime = self.get_header_item(httpr, "last-modified", default=None)
-                logger.debug("HTTP last-modified: {}".format(file_mtime))
 
                 epochTime = 0
 
@@ -214,34 +206,37 @@ class RemoteObject(DomainObject):
                     else:
                         epochTime = email.utils.mktime_tz(modified_tuple)
 
-                self.provider.http_cache[self._file]["mtime"] = epochTime
-                self.provider.http_cache[self._file]["cache_time"] = time.time()
-                logger.debug(f"Upddate cache/mtime: {self._file}")
                 return epochTime
+
+        if self.exists():
+            provider = self.provider
+            if provider.enable_cache:
+                key = f"MTIME:{self._matched_address.group()}"
+                return provider.retrieve_cache(provider.cache_name, key, provider.cache_ttl, retrieval_func)
+            else:
+                return retrieval_func()
         else:
             raise HTTPFileException(
                 "The file does not seem to exist remotely: %s" % self.remote_file()
             )
 
     def size(self):
-        if self.exists():
-            import time
-
-            cache_results = self.provider.http_cache.get(self._file, {})
-            self.provider.http_cache[self._file] = cache_results
-            if ("size" in cache_results) and (time.time() - cache_results.get("cache_time", 0) < 60):
-                return cache_results["size"]
-
+        def retrieval_func():
             with self.httpr(verb="HEAD") as httpr:
 
                 content_size = int(
                     self.get_header_item(httpr, "content-size", default=0)
                 )
 
-                self.provider.http_cache[self._file]["size"] = content_size
-                self.provider.http_cache[self._file]["cache_time"] = time.time()
-                logger.debug(f"Upddate cache/size: {self._file}")
                 return content_size
+
+        if self.exists():
+            provider = self.provider
+            if provider.enable_cache:
+                key = f"SIZE:{self._matched_address.group()}"
+                return provider.retrieve_cache(provider.cache_name, key, provider.cache_ttl, retrieval_func)
+            else:
+                return retrieval_func()
         else:
             return self._iofile.size_local
 

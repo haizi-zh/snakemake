@@ -35,13 +35,18 @@ class RemoteProvider(
     supports_default = True  # class variable
 
     def __init__(
-        self, *args, keep_local=False, stay_on_remote=False, is_default=False, **kwargs
+        self, *args, keep_local=False, stay_on_remote=False, is_default=False, 
+        enable_cache=True, cache_name="S3", cache_ttl=60,
+        **kwargs
     ):
         super(RemoteProvider, self).__init__(
             *args,
             keep_local=keep_local,
             stay_on_remote=stay_on_remote,
             is_default=is_default,
+            enable_cache=enable_cache,
+            cache_name=cache_name,
+            cache_ttl=cache_ttl,
             **kwargs
         )  # in addition to methods provided by AbstractRemoteProvider, we add these in
 
@@ -76,10 +81,29 @@ class RemoteObject(AbstractRemoteObject):
 
     # === Implementations of abstract class members ===
 
+    # Helper function for mtime() and size()
+    def _retrieve_cache_helper(self, prop, retry=True):
+        provider = self.provider
+        cache_key = f"{self.s3_bucket}/{self.s3_key}"
+
+        for _ in range(3 if retry else 2):
+            results = type(provider).retrieve_cache(provider.cache_name, cache_key, provider.cache_ttl)
+            if results is None:
+                # Cache missing. Regenerate the entire bucket list
+                self.list
+            else:
+                return results[prop]
+            
+        raise WorkflowError(f"Failed to retrieve cache: {cache_key}")
+
+
     def exists(self):
         if self._matched_s3_path:
-            # logger.info(f"S3 exists: s3://{self.s3_bucket}/{self.s3_key}")
-            return self._s3c.exists_in_bucket(self.s3_bucket, self.s3_key)
+            provider = self.provider
+            if provider.enable_cache:
+                return self.s3_key in self.list
+            else:
+                return self._s3c.exists_in_bucket(self.s3_bucket, self.s3_key)
         else:
             raise S3FileException(
                 "The file cannot be parsed as an s3 path in form 'bucket/key': %s"
@@ -88,7 +112,11 @@ class RemoteObject(AbstractRemoteObject):
 
     def mtime(self):
         if self.exists():
-            return self._s3c.key_last_modified(self.s3_bucket, self.s3_key)
+            provider = self.provider
+            if provider.enable_cache:
+                return self._retrieve_cache_helper("mtime")
+            else:
+                return self._s3c.key_last_modified(self.s3_bucket, self.s3_key)
         else:
             raise S3FileException(
                 "The file does not seem to exist remotely: %s" % self.local_file()
@@ -96,7 +124,11 @@ class RemoteObject(AbstractRemoteObject):
 
     def size(self):
         if self.exists():
-            return self._s3c.key_size(self.s3_bucket, self.s3_key)
+            provider = self.provider
+            if provider.enable_cache:
+                return self._retrieve_cache_helper("size") // 1024
+            else:
+                return self._s3c.key_size(self.s3_bucket, self.s3_key)
         else:
             return self._iofile.size_local
 
@@ -115,7 +147,39 @@ class RemoteObject(AbstractRemoteObject):
 
     @property
     def list(self):
-        return self._s3c.list_keys(self.s3_bucket)
+        provider = self.provider
+        bucket_name = self.s3_bucket
+        if provider.enable_cache:
+            import time
+
+            cache_contents_all = type(provider).cache[provider.cache_name]
+            # The cache may contain objects from more than one bucket.
+            # Filter entries for this particular bucket
+            cache_contents = {k: v for k, v in cache_contents_all.items() \
+                if k.startswith(f"{bucket_name}/")}
+
+            # Find the oldest cache_ts and determine whether to refresh the cache
+            oldest_cache_ts = min([v["cache_ts"] for v in cache_contents.values()] or [0])
+
+            current_ts = time.time()
+            if current_ts - oldest_cache_ts < provider.cache_ttl:
+                # List of keys
+                return [v["data"]["key"] for v in cache_contents.values()]
+            else:
+                # bucket_objects: [key, size, mtime]
+                bucket_objects = self._s3c.list_bucket(bucket_name)
+                update_contents = {f"{bucket_name}/{o['key']}": \
+                    {"cache_ts": current_ts, "data": o} for o in bucket_objects}
+                # Other cache contents
+                other_contents = {k: v for k, v in cache_contents_all.items() \
+                    if not k.startswith(f"{bucket_name}/")}
+                # Merge, and update the cache
+                type(provider).cache[provider.cache_name] = {**other_contents, **update_contents}
+
+                return [v["key"] for v in bucket_objects]
+        else:
+            # Not using cache and list the bucket on the fly.
+            return self._s3c.list_keys(bucket_name)
 
     # === Related methods ===
 
@@ -150,11 +214,8 @@ class RemoteObject(AbstractRemoteObject):
                 % self.local_file()
             )
 
-class S3Helper(object):
-    # Create a cache to speed up S3 access
-    s3_cache = {}
-    s3 = None
 
+class S3Helper(object):
     def __init__(self, *args, **kwargs):
         # as per boto, expects the environment variables to be set:
         # AWS_ACCESS_KEY_ID
@@ -175,35 +236,6 @@ class S3Helper(object):
             kwargs["endpoint_url"] = kwargs.pop("host")
 
         self.s3 = boto3.resource("s3", **kwargs)
-        S3Helper.s3 = self.s3
-
-
-    @classmethod
-    def retrieve_cache(cls, bucket_name):
-        import time
-
-        bucket_cache = cls.s3_cache.get(bucket_name)
-        delta_time = None
-        if bucket_cache:
-            current = time.time()
-            cache_time = bucket_cache["cache_time"]
-            delta_time = current - cache_time
-
-            # default cache expiration: 60 sec
-            if delta_time < 60:
-                return bucket_cache["contents"]
-
-        # Update cache
-        logger.debug(f"Update S3 cache: {bucket_name}")
-        logger.debug(f"Reason: cache exists: {bucket_cache is not None}, delta_time: {delta_time}")
-        b = cls.s3.Bucket(bucket_name)
-        bucket_objects = {o.key: o for o in b.objects.iterator()}
-        cls.s3_cache[bucket_name] = {
-            "contents": bucket_objects,
-            "cache_time": time.time()
-            }
-        logger.debug(f"Cacche updated: {bucket_name}")
-        return cls.s3_cache[bucket_name]["contents"]
 
     def bucket_exists(self, bucket_name):
         try:
@@ -360,16 +392,14 @@ class S3Helper(object):
         assert bucket_name, "bucket_name must be specified"
         assert key, "Key must be specified"
 
-        return key in self.retrieve_cache(bucket_name).keys()
-
-        # try:
-        #     self.s3.Object(bucket_name, key).load()
-        # except botocore.exceptions.ClientError as e:
-        #     if e.response["Error"]["Code"] == "404":
-        #         return False
-        #     else:
-        #         raise
-        # return True
+        try:
+            self.s3.Object(bucket_name, key).load()
+        except botocore.exceptions.ClientError as e:
+            if e.response["Error"]["Code"] == "404":
+                return False
+            else:
+                raise
+        return True
 
     def key_size(self, bucket_name, key):
         """Returns the size of a key based on a HEAD request
@@ -384,11 +414,9 @@ class S3Helper(object):
         assert bucket_name, "bucket_name must be specified"
         assert key, "Key must be specified"
 
-        return self.retrieve_cache(bucket_name)[key].size // 1024
+        k = self.s3.Object(bucket_name, key)
 
-        # k = self.s3.Object(bucket_name, key)
-
-        # return k.content_length // 1024
+        return k.content_length // 1024
 
     def key_last_modified(self, bucket_name, key):
         """Returns a timestamp of a key based on a HEAD request
@@ -403,12 +431,17 @@ class S3Helper(object):
         assert bucket_name, "bucket_name must be specified"
         assert key, "Key must be specified"
 
-        return self.retrieve_cache(bucket_name)[key].last_modified.timestamp()
+        k = self.s3.Object(bucket_name, key)
 
-        # k = self.s3.Object(bucket_name, key)
-
-        # return k.last_modified.timestamp()
+        return k.last_modified.timestamp()
 
     def list_keys(self, bucket_name):
-        return list(self.retrieve_cache(bucket_name).keys())
+        b = self.s3.Bucket(bucket_name)
+        return [o.key for o in b.objects.iterator()]
 
+    def list_bucket(self, bucket_name):
+        # Unlike list_keys, this method lists all objcts in the bucket, with the key, size and 
+        # last modified time
+        b = self.s3.Bucket(bucket_name)
+        return [{"key": o.key, "mtime": o.last_modified.timestamp(), "size": o.size} \
+            for o in b.objects.iterator()]
