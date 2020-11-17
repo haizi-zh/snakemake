@@ -100,7 +100,7 @@ class AbstractRemoteProvider:
             type(self).cache[self.cache_name] = {}
 
             provider_name = self.cache_name + (" (default)" if self.is_default else "")
-            logger.info(f"Cache initialized for RemoteProvider {provider_name}. Cache TTL: {self.cache_ttl} seconds")
+            logger.debug(f"Cache initialized for RemoteProvider {provider_name}. Cache TTL: {self.cache_ttl} seconds")
 
     def remote(
         self, value, *args, keep_local=None, stay_on_remote=None, static=False, **kwargs
