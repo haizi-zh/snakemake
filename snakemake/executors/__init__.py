@@ -1604,6 +1604,12 @@ class KubernetesExecutor(ClusterExecutor):
         body.spec = kubernetes.client.V1PodSpec(containers=[container])
         # fail on first error
         body.spec.restart_policy = "Never"
+        
+        # To apply k8s node selector, set "k8s_node_selector" in params
+        node_selector = job.params.get("k8s_node_selector")
+        if node_selector:
+            logger.debug(f"Enable Kubernetes node selector: {node_selector}")
+            body.spec.node_selector = node_selector
 
         # source files as a secret volume
         # we copy these files to the workdir before executing Snakemake
