@@ -34,6 +34,7 @@ class RemoteProvider(
 
     supports_default = True  # class variable
     provider_name = "S3"
+    cache_metadata = {}
 
     @classmethod
     def update_cache(cls, bucket_name, key, data):
@@ -42,8 +43,12 @@ class RemoteProvider(
         s3_cache = cls.cache[cls.provider_name]
         if bucket_name not in s3_cache:
             s3_cache[bucket_name] = {}
+        if bucket_name not in cls.cache_metadata:
+            cls.cache_metadata[bucket_name] = {}
 
-        s3_cache[bucket_name][key] = {"data": data, "cache_ts": time.time()}
+        current_ts = time.time()
+        s3_cache[bucket_name][key] = {"data": data, "cache_ts": current_ts}
+        cls.cache_metadata[bucket_name]["bucket_level_cache_ts"] = current_ts
 
 
     @classmethod
@@ -207,21 +212,25 @@ class RemoteObject(AbstractRemoteObject):
         assert provider.enable_cache is True
 
         import time
-        current_ts = time.time()
+
+        provider.cache_metadata[self.s3_bucket] = provider.cache_metadata.get(self.s3_bucket, {})
 
         if force_refresh:
             logger.debug(f"Force-refresh the cache: {self.s3_bucket}...")
             # bucket_objects: [key, size, mtime]
             bucket_objects = self._s3c.list_bucket(self.s3_bucket)
+            current_ts = time.time()
             update_contents = {k: {"cache_ts": current_ts, "data": v} for k, v in bucket_objects.items()}
+            provider.cache_metadata[self.s3_bucket]["bucket_level_cache_ts"] = current_ts
             # Update the cache
             type(provider).cache[provider.provider_name][self.s3_bucket] = update_contents
             return bucket_objects
 
         cache_contents = type(provider).cache[provider.provider_name].get(self.s3_bucket, {})
+        current_ts = time.time()
 
         # Find the cache_ts and determine whether to refresh the cache
-        cache_ts = list(cache_contents.values())[0]["cache_ts"] if cache_contents else 0
+        cache_ts = provider.cache_metadata.get(self.s3_bucket, {}).get("bucket_level_cache_ts", 0)
         if current_ts - cache_ts < provider.cache_ttl:
             # List of keys
             return cache_contents
@@ -229,20 +238,21 @@ class RemoteObject(AbstractRemoteObject):
             logger.debug(f"Cache missed. Refresh the cache: {self.s3_bucket}...")
             # bucket_objects: [key, size, mtime]
             bucket_objects = self._s3c.list_bucket(self.s3_bucket)
+            current_ts = time.time()
             update_contents = {k: {"cache_ts": current_ts, "data": v} for k, v in bucket_objects.items()}
+            provider.cache_metadata[self.s3_bucket]["bucket_level_cache_ts"] = current_ts
             # Update the cache
-            type(provider).cache[provider.provider_name][bucket_name] = update_contents
+            type(provider).cache[provider.provider_name][self.s3_bucket] = update_contents
             return bucket_objects
 
     @property
     def list(self):
         provider = self.provider
-        bucket_name = self.s3_bucket
         if provider.enable_cache:
             return self.list_bucket().keys()
         else:
             # Not using cache and list the bucket on the fly.
-            return self._s3c.list_keys(bucket_name)
+            return self._s3c.list_keys(self.s3_bucket)
 
     # === Related methods ===
 
