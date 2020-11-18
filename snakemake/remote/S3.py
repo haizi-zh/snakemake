@@ -78,7 +78,7 @@ class RemoteProvider(
 
     def __init__(
         self, *args, keep_local=False, stay_on_remote=False, is_default=False, 
-        enable_cache=True, cache_ttl=30,
+        enable_cache=True, cache_ttl=60,
         **kwargs
     ):
         super(RemoteProvider, self).__init__(
