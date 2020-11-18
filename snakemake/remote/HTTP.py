@@ -28,9 +28,11 @@ except ImportError as e:
 
 
 class RemoteProvider(AbstractRemoteProvider):
+    provider_name = "HTTP"
+
     def __init__(
         self, *args, keep_local=False, stay_on_remote=False, is_default=False, 
-        enable_cache=False, cache_name="HTTP", cache_ttl=60,
+        enable_cache=False, cache_ttl=30,
         **kwargs
     ):
         super(RemoteProvider, self).__init__(
@@ -39,7 +41,6 @@ class RemoteProvider(AbstractRemoteProvider):
             stay_on_remote=stay_on_remote,
             is_default=is_default,
             enable_cache=enable_cache,
-            cache_name=cache_name,
             cache_ttl=cache_ttl,
             **kwargs
         )
@@ -178,7 +179,7 @@ class RemoteObject(DomainObject):
             is_existed = False
             if provider.enable_cache:
                 key = f"EXISTS:{matched_addr.group()}"
-                return provider.retrieve_cache(provider.cache_name, key, provider.cache_ttl, retrieval_func)
+                return provider.retrieve_cache(provider.provider_name, key, provider.cache_ttl, retrieval_func)
             else:
                 return retrieval_func()
         else:
@@ -212,7 +213,7 @@ class RemoteObject(DomainObject):
             provider = self.provider
             if provider.enable_cache:
                 key = f"MTIME:{self._matched_address.group()}"
-                return provider.retrieve_cache(provider.cache_name, key, provider.cache_ttl, retrieval_func)
+                return provider.retrieve_cache(provider.provider_name, key, provider.cache_ttl, retrieval_func)
             else:
                 return retrieval_func()
         else:
@@ -234,7 +235,7 @@ class RemoteObject(DomainObject):
             provider = self.provider
             if provider.enable_cache:
                 key = f"SIZE:{self._matched_address.group()}"
-                return provider.retrieve_cache(provider.cache_name, key, provider.cache_ttl, retrieval_func)
+                return provider.retrieve_cache(provider.provider_name, key, provider.cache_ttl, retrieval_func)
             else:
                 return retrieval_func()
         else:

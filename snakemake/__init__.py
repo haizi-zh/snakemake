@@ -159,6 +159,7 @@ def snakemake(
     precommand="",
     default_remote_provider=None,
     default_remote_prefix="",
+    default_remote_cache=False,
     tibanna_config=False,
     assume_shared_fs=True,
     cluster_status=None,
@@ -277,6 +278,7 @@ def snakemake(
         container_image (str):      Docker image to use, e.g., for kubernetes.
         default_remote_provider (str): default remote provider to use instead of local files (e.g. S3, GS)
         default_remote_prefix (str): prefix for default remote provider (e.g. name of the bucket).
+        default_remote_cache (bool): enable caching for remote providers.
         tibanna (bool):             submit jobs to AWS cloud using Tibanna.
         tibanna_sfn (str):          Step function (Unicorn) name of Tibanna (e.g. tibanna_unicorn_monty). This must be deployed first using tibanna cli.
         google_lifesciences (bool): submit jobs to Google Cloud Life Sciences (pipelines API).
@@ -532,7 +534,7 @@ def snakemake(
                 raise WorkflowError("Unknown default remote provider.")
             if rmt.RemoteProvider.supports_default:
                 _default_remote_provider = rmt.RemoteProvider(
-                    keep_local=True, is_default=True, enable_cache=True
+                    keep_local=True, is_default=True, enable_cache=default_remote_cache
                 )
             else:
                 raise WorkflowError(
@@ -1827,6 +1829,11 @@ def get_argument_parser(profile=None):
         help="Specify prefix for default remote provider. E.g. " "a bucket name.",
     )
     group_behavior.add_argument(
+        "--default-remote-cache",
+        default=False,
+        help="Indicate whether to enable caching for remote providers. Default is false."
+    )
+    group_behavior.add_argument(
         "--no-shared-fs",
         action="store_true",
         help="Do not assume that jobs share a common file "
@@ -2656,6 +2663,7 @@ def main(argv=None):
             wrapper_prefix=args.wrapper_prefix,
             default_remote_provider=args.default_remote_provider,
             default_remote_prefix=args.default_remote_prefix,
+            default_remote_cache=args.default_remote_cache,
             assume_shared_fs=not args.no_shared_fs,
             cluster_status=args.cluster_status,
             export_cwl=args.export_cwl,
