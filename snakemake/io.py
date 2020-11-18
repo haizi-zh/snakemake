@@ -783,6 +783,10 @@ def wait_for_files(
     """Wait for given files to be present in filesystem."""
     files = list(files)
 
+    for f in files:
+        if isinstance(f, _IOFile) and f.is_remote:
+            f.remote_object.exists_refresh_cache = True
+
     def get_missing():
         return [
             f
