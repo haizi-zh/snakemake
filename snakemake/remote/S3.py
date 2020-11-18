@@ -143,10 +143,16 @@ class RemoteObject(AbstractRemoteObject):
         if self._matched_s3_path:
             provider = self.provider
             if provider.enable_cache:
-                cache_entry = self.provider.retrieve_cache(self.s3_bucket, self.s3_key, provider.cache_ttl, \
-                    lambda: self.list_bucket(force_refresh=True).get(self.s3_key))
+                if self.exists_refresh_cache:
+                    existence = self._s3c.exists_in_bucket(self.s3_bucket, self.s3_key)
+                    if existence:
+                        mtime = self._s3c.key_last_modified(self.s3_bucket, self.s3_key)
+                        size = self._s3c.key_size(self.s3_bucket, self.s3_key, size_in_kb=False)
+                        provider.update_cache(self.s3_bucket, self.s3_key, {"mtime": mtime, "size": size})
                     
-                return False if cache_entry is None else True
+                    return existence
+                else:
+                    return self.s3_key in self.list
             else:
                 return self._s3c.exists_in_bucket(self.s3_bucket, self.s3_key)
         else:

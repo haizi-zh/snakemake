@@ -207,6 +207,11 @@ class AbstractRemoteObject:
         self.provider = provider
         self.protocol = protocol
 
+        # By default, checking existence behaves "normally", i.e. refresh the
+        # cache only if it is expired. Otherwise, always refresh the cache prior
+        # to the check
+        self.exists_refresh_cache = False
+
     async def inventory(self, cache: snakemake.io.IOCache):
         """From this file, try to find as much existence and modification date
         information as possible.
@@ -218,6 +223,14 @@ class AbstractRemoteObject:
     @abstractmethod
     def get_inventory_parent(self):
         pass
+
+    @property
+    def exists_refresh_cache(self):
+        return self._exists_refresh_cache
+
+    @exists_refresh_cache.setter
+    def exists_refresh_cache(self, value):
+        self._exists_refresh_cache = value
 
     @property
     def _file(self):
