@@ -73,7 +73,7 @@ class AbstractRemoteProvider:
             current_ts = time.time()
             if current_ts - contents["cache_ts"] < cache_ttl:
                 return contents["data"]
-        
+
         if func is not None:
             # Cache missed. Try retrieving the data and update
             data = func()
@@ -81,8 +81,15 @@ class AbstractRemoteProvider:
             return data
 
     def __init__(
-        self, *args, keep_local=False, stay_on_remote=False, is_default=False, 
-        enable_cache=False, provider_name=None, cache_ttl=60, **kwargs
+        self,
+        *args,
+        keep_local=False,
+        stay_on_remote=False,
+        is_default=False,
+        enable_cache=False,
+        provider_name=None,
+        cache_ttl=60,
+        **kwargs,
     ):
         self.args = args
         self.stay_on_remote = stay_on_remote
@@ -98,7 +105,9 @@ class AbstractRemoteProvider:
             type(self).cache[provider_name] = {}
 
             provider_suffix = " (default)" if self.is_default else ""
-            logger.debug(f"Initialize remote provider cache: {provider_name}{provider_suffix}. Cache TTL: {self.cache_ttl} seconds")
+            logger.debug(
+                f"Initialize remote provider cache: {provider_name}{provider_suffix}. Cache TTL: {self.cache_ttl} seconds"
+            )
 
     def remote(
         self, value, *args, keep_local=None, stay_on_remote=None, static=False, **kwargs
@@ -144,7 +153,7 @@ class AbstractRemoteProvider:
             keep_local=keep_local,
             stay_on_remote=stay_on_remote,
             provider=self,
-            **kwargs
+            **kwargs,
         )
         if static:
             remote_object = StaticRemoteObjectProxy(remote_object)
@@ -194,7 +203,7 @@ class AbstractRemoteObject:
         keep_local=False,
         stay_on_remote=False,
         provider=None,
-        **kwargs
+        **kwargs,
     ):
         assert protocol is not None
         # self._iofile must be set before the remote object can be used, in io.py or elsewhere
