@@ -1612,9 +1612,15 @@ class KubernetesExecutor(ClusterExecutor):
 
         body = kubernetes.client.V1Pod()
         pod_labels = {
-            "app": "snakemake", "rule": job.rule.name, "job_id": str(job.jobid), "attempt": str(job.attempt)
+            "app": "snakemake",
+            "rule": job.rule.name,
+            "job_id": str(job.jobid),
+            "attempt": str(job.attempt),
         }
-        pod_labels = {**pod_labels, **{f"wildcards/{k}":v for k,v in job.wildcards.items()}}
+        pod_labels = {
+            **pod_labels,
+            **{f"wildcards/{k}": v for k, v in job.wildcards.items()},
+        }
         body.metadata = kubernetes.client.V1ObjectMeta(labels=pod_labels)
 
         body.metadata.name = jobid
