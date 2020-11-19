@@ -31,9 +31,14 @@ class RemoteProvider(AbstractRemoteProvider):
     provider_name = "HTTP"
 
     def __init__(
-        self, *args, keep_local=False, stay_on_remote=False, is_default=False, 
-        enable_cache=False, cache_ttl=30,
-        **kwargs
+        self,
+        *args,
+        keep_local=False,
+        stay_on_remote=False,
+        is_default=False,
+        enable_cache=False,
+        cache_ttl=30,
+        **kwargs,
     ):
         super(RemoteProvider, self).__init__(
             *args,
@@ -42,7 +47,7 @@ class RemoteProvider(AbstractRemoteProvider):
             is_default=is_default,
             enable_cache=enable_cache,
             cache_ttl=cache_ttl,
-            **kwargs
+            **kwargs,
         )
 
     @property
@@ -96,14 +101,14 @@ class RemoteObject(DomainObject):
         provider=None,
         additional_request_string="",
         allow_redirects=True,
-        **kwargs
+        **kwargs,
     ):
         super(RemoteObject, self).__init__(
             *args,
             keep_local=keep_local,
             provider=provider,
             allow_redirects=allow_redirects,
-            **kwargs
+            **kwargs,
         )
         self.additional_request_string = additional_request_string
 
@@ -179,7 +184,9 @@ class RemoteObject(DomainObject):
             is_existed = False
             if provider.enable_cache:
                 key = f"EXISTS:{matched_addr.group()}"
-                return provider.retrieve_cache(provider.provider_name, key, provider.cache_ttl, retrieval_func)
+                return provider.retrieve_cache(
+                    provider.provider_name, key, provider.cache_ttl, retrieval_func
+                )
             else:
                 return retrieval_func()
         else:
@@ -213,7 +220,9 @@ class RemoteObject(DomainObject):
             provider = self.provider
             if provider.enable_cache:
                 key = f"MTIME:{self._matched_address.group()}"
-                return provider.retrieve_cache(provider.provider_name, key, provider.cache_ttl, retrieval_func)
+                return provider.retrieve_cache(
+                    provider.provider_name, key, provider.cache_ttl, retrieval_func
+                )
             else:
                 return retrieval_func()
         else:
@@ -235,7 +244,9 @@ class RemoteObject(DomainObject):
             provider = self.provider
             if provider.enable_cache:
                 key = f"SIZE:{self._matched_address.group()}"
-                return provider.retrieve_cache(provider.provider_name, key, provider.cache_ttl, retrieval_func)
+                return provider.retrieve_cache(
+                    provider.provider_name, key, provider.cache_ttl, retrieval_func
+                )
             else:
                 return retrieval_func()
         else:

@@ -1832,7 +1832,7 @@ def get_argument_parser(profile=None):
         "--default-remote-cache",
         default=False,
         action="store_true",
-        help="Indicate whether to enable caching for remote providers. Default is false."
+        help="Indicate whether to enable caching for remote providers. Default is false.",
     )
     group_behavior.add_argument(
         "--no-shared-fs",
