@@ -345,7 +345,7 @@ class RealExecutor(AbstractExecutor):
             benchmark_repeats=job.benchmark_repeats if not job.is_group() else None,
             target=target,
             rules=rules,
-            **kwargs
+            **kwargs,
         )
         return cmd
 
@@ -748,7 +748,7 @@ class ClusterExecutor(RealExecutor):
             latency_wait=self.latency_wait,
             wait_for_files=wait_for_files,
             path=path,
-            **kwargs
+            **kwargs,
         )
         try:
             return format_p(pattern)
@@ -773,7 +773,7 @@ class ClusterExecutor(RealExecutor):
             _quote_all=True,
             use_threads=use_threads,
             envvars=envvars,
-            **kwargs
+            **kwargs,
         )
         content = self.format_job(self.jobscript, job, exec_job=exec_job, **kwargs)
         logger.debug("Jobscript:\n{}".format(content))
@@ -1567,7 +1567,7 @@ class KubernetesExecutor(ClusterExecutor):
         body.spec = kubernetes.client.V1PodSpec(containers=[container])
         # fail on first error
         body.spec.restart_policy = "Never"
-        
+
         # To apply k8s node selector, set "k8s_node_selector" in params
         node_selector = job.params.get("k8s_node_selector")
         if node_selector:
