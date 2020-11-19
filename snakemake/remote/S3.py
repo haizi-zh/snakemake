@@ -85,7 +85,7 @@ class RemoteProvider(
         keep_local=False,
         stay_on_remote=False,
         is_default=False,
-        enable_cache=True,
+        enable_cache=False,
         cache_ttl=60,
         **kwargs,
     ):
@@ -95,7 +95,7 @@ class RemoteProvider(
             stay_on_remote=stay_on_remote,
             is_default=is_default,
             enable_cache=enable_cache,
-            provider_name=self.provider_name,
+            provider_name=type(self).provider_name,
             cache_ttl=cache_ttl,
             **kwargs,
         )  # in addition to methods provided by AbstractRemoteProvider, we add these in
