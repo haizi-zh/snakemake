@@ -1575,7 +1575,7 @@ class KubernetesExecutor(ClusterExecutor):
                 logger.warning(
                     f"[WARNING] 404 not found when trying to delete the pod: {j.jobid}\n"
                     "[WARNING] Ignore this error\n"
-                    )
+                )
             else:
                 raise
 
@@ -1736,7 +1736,7 @@ class KubernetesExecutor(ClusterExecutor):
     # ignore it.
     def _reauthenticate_and_retry(self, func=None):
         import kubernetes
-        
+
         # Unauthorized.
         # Reload config in order to ensure token is
         # refreshed. Then try again.
@@ -1847,7 +1847,9 @@ class KubernetesExecutor(ClusterExecutor):
                         # finished
                         j.callback(j.job)
 
-                        func = lambda: self.safe_delete_pod(j.jobid, ignore_not_found=True)
+                        func = lambda: self.safe_delete_pod(
+                            j.jobid, ignore_not_found=True
+                        )
                         self._kubernetes_retry(func)
                     else:
                         # still active
