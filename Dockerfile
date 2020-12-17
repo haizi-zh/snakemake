@@ -1,4 +1,4 @@
-FROM haizizh/compbio:v0.1
+FROM haizizh/compbio:v0.1.2
 LABEL maintainer="Haizi Zheng <haizi.zh@gmail.com>"
 ARG DEBIAN_FRONTEND=noninteractiv
 
