@@ -779,7 +779,7 @@ class ClusterExecutor(RealExecutor):
         logger.debug("Jobscript:\n{}".format(content))
         with open(jobscript, "w") as f:
             print(content, file=f)
-        os.chmod(jobscript, os.stat(jobscript).st_mode | stat.S_IXUSR)
+        os.chmod(jobscript, os.stat(jobscript).st_mode | stat.S_IXUSR | stat.S_IRUSR)
 
     def cluster_params(self, job):
         """Return wildcards object for job from cluster_config."""
@@ -1571,13 +1571,13 @@ class KubernetesExecutor(ClusterExecutor):
         except kubernetes.client.rest.ApiException as e:
             if e.status == 404 and ignore_not_found:
                 # Can't find the pod. Maybe it's already been
-                # detroyed. Proceed with a warning message.
+                # destroyed. Proceed with a warning message.
                 logger.warning(
                     f"[WARNING] 404 not found when trying to delete the pod: {j.jobid}\n"
                     "[WARNING] Ignore this error\n"
                 )
             else:
-                raise
+                raise e
 
     def shutdown(self):
         self.unregister_secret()
