@@ -345,7 +345,7 @@ class RealExecutor(AbstractExecutor):
             benchmark_repeats=job.benchmark_repeats if not job.is_group() else None,
             target=target,
             rules=rules,
-            **kwargs
+            **kwargs,
         )
         return cmd
 
@@ -748,7 +748,7 @@ class ClusterExecutor(RealExecutor):
             latency_wait=self.latency_wait,
             wait_for_files=wait_for_files,
             path=path,
-            **kwargs
+            **kwargs,
         )
         try:
             return format_p(pattern)
@@ -773,7 +773,7 @@ class ClusterExecutor(RealExecutor):
             _quote_all=True,
             use_threads=use_threads,
             envvars=envvars,
-            **kwargs
+            **kwargs,
         )
         content = self.format_job(self.jobscript, job, exec_job=exec_job, **kwargs)
         logger.debug("Jobscript:\n{}".format(content))
@@ -1487,7 +1487,7 @@ class KubernetesExecutor(ClusterExecutor):
 
             # The kubernetes API can't create secret files larger than 1MB.
             source_file_size = os.path.getsize(f)
-            max_file_size = 1000000
+            max_file_size = 1048576
             if source_file_size > max_file_size:
                 logger.warning(
                     "Skipping the source file {f}. Its size {source_file_size} exceeds "
@@ -1500,8 +1500,25 @@ class KubernetesExecutor(ClusterExecutor):
 
             with open(f, "br") as content:
                 key = "f{}".format(i)
+
+                # Some files are smaller than 1MB, but grows larger after being base64 encoded
+                # We should exclude them as well, otherwise Kubernetes APIs will complain
+                encoded_contents = base64.b64encode(content.read()).decode()
+                encoded_size = len(encoded_contents)
+                if encoded_size > 1048576:
+                    logger.warning(
+                        f"Skipping the source file {f} for secret key {key}. "
+                        f"Its base64 encoded size {encoded_size} exceeds "
+                        "the maximum file size (1MB) that can be passed "
+                        "from host to kubernetes.".format(
+                            f=f, source_file_size=source_file_size
+                        )
+                    )
+                    continue
+
                 self.secret_files[key] = f
-                secret.data[key] = base64.b64encode(content.read()).decode()
+                secret.data[key] = encoded_contents
+
         for e in self.envvars:
             try:
                 key = e.lower()
@@ -1509,14 +1526,58 @@ class KubernetesExecutor(ClusterExecutor):
                 self.secret_envvars[key] = e
             except KeyError:
                 continue
+
+        # Test if the total size of the configMap exceeds 1MB
+        config_map_size = sum(
+            [len(base64.b64decode(v)) for k, v in secret.data.items()]
+        )
+        if config_map_size > 1048576:
+            logger.warning(
+                "The total size of the included files and other Kubernetes secrets "
+                f"is {config_map_size}, exceeding the 1MB limit.\n"
+            )
+            logger.warning(
+                "The following are the largest files. Consider removing some of them "
+                f"(you need remove at least {config_map_size - 1048576} bytes):"
+            )
+
+            entry_sizes = {
+                self.secret_files[k]: len(base64.b64decode(v))
+                for k, v in secret.data.items()
+                if k in self.secret_files
+            }
+            for k, v in sorted(entry_sizes.items(), key=lambda item: item[1])[:-6:-1]:
+                logger.warning(f"  * File: {k}, original size: {v}")
+
+            raise WorkflowError("ConfigMap too large")
+
         self.kubeapi.create_namespaced_secret(self.namespace, secret)
 
     def unregister_secret(self):
         import kubernetes.client
 
-        self.kubeapi.delete_namespaced_secret(
+        safe_delete_secret = lambda: self.kubeapi.delete_namespaced_secret(
             self.run_namespace, self.namespace, body=kubernetes.client.V1DeleteOptions()
         )
+        self._kubernetes_retry(safe_delete_secret)
+
+    # In rare cases, deleting a pod may rais 404 NotFound error.
+    def safe_delete_pod(self, jobid, ignore_not_found=True):
+        import kubernetes.client
+
+        body = kubernetes.client.V1DeleteOptions()
+        try:
+            self.kubeapi.delete_namespaced_pod(jobid, self.namespace, body=body)
+        except kubernetes.client.rest.ApiException as e:
+            if e.status == 404 and ignore_not_found:
+                # Can't find the pod. Maybe it's already been
+                # destroyed. Proceed with a warning message.
+                logger.warning(
+                    f"[WARNING] 404 not found when trying to delete the pod: {j.jobid}\n"
+                    "[WARNING] Ignore this error\n"
+                )
+            else:
+                raise e
 
     def shutdown(self):
         self.unregister_secret()
@@ -1528,7 +1589,9 @@ class KubernetesExecutor(ClusterExecutor):
         body = kubernetes.client.V1DeleteOptions()
         with self.lock:
             for j in self.active_jobs:
-                self.kubeapi.delete_namespaced_pod(j.jobid, self.namespace, body=body)
+                func = lambda: self.safe_delete_pod(j.jobid, ignore_not_found=True)
+                self._kubernetes_retry(func)
+
         self.shutdown()
 
     def run(self, job, callback=None, submit_callback=None, error_callback=None):
@@ -1549,6 +1612,7 @@ class KubernetesExecutor(ClusterExecutor):
 
         body = kubernetes.client.V1Pod()
         body.metadata = kubernetes.client.V1ObjectMeta(labels={"app": "snakemake"})
+
         body.metadata.name = jobid
 
         # container
@@ -1646,6 +1710,43 @@ class KubernetesExecutor(ClusterExecutor):
             KubernetesJob(job, jobid, callback, error_callback, pod, None)
         )
 
+    # Sometimes, certain k8s requests throw kubernetes.client.rest.ApiException
+    # Solving this issue requires reauthentication, as _kubernetes_retry shows
+    # However, reauthentication itself, under rare conditions, may also throw
+    # errors such as:
+    #   kubernetes.client.exceptions.ApiException: (409), Reason: Conflict
+    #
+    # This error doesn't mean anything wrong with the k8s cluster, and users can safely
+    # ignore it.
+    def _reauthenticate_and_retry(self, func=None):
+        import kubernetes
+
+        # Unauthorized.
+        # Reload config in order to ensure token is
+        # refreshed. Then try again.
+        logger.info("Trying to reauthenticate")
+        kubernetes.config.load_kube_config()
+        subprocess.run(["kubectl", "get", "nodes"])
+
+        self.kubeapi = kubernetes.client.CoreV1Api()
+        self.batchapi = kubernetes.client.BatchV1Api()
+
+        try:
+            self.register_secret()
+        except kubernetes.client.rest.ApiException as e:
+            if e.status == 409 and e.reason == "Conflict":
+                logger.warning("409 conflict ApiException when registering secrets")
+                logger.warning(e)
+            else:
+                raise WorkflowError(
+                    e,
+                    "This is likely a bug in "
+                    "https://github.com/kubernetes-client/python.",
+                )
+
+        if func:
+            return func()
+
     def _kubernetes_retry(self, func):
         import kubernetes
         import urllib3
@@ -1658,22 +1759,7 @@ class KubernetesExecutor(ClusterExecutor):
                     # Unauthorized.
                     # Reload config in order to ensure token is
                     # refreshed. Then try again.
-                    logger.info("trying to reauthenticate")
-                    kubernetes.config.load_kube_config()
-                    subprocess.run(["kubectl", "get", "nodes"])
-
-                    self.kubeapi = kubernetes.client.CoreV1Api()
-                    self.batchapi = kubernetes.client.BatchV1Api()
-                    self.register_secret()
-                    try:
-                        return func()
-                    except kubernetes.client.rest.ApiException as e:
-                        # Both attempts failed, raise error.
-                        raise WorkflowError(
-                            e,
-                            "This is likely a bug in "
-                            "https://github.com/kubernetes-client/python.",
-                        )
+                    return self._reauthenticate_and_retry(func)
             # Handling timeout that may occur in case of GKE master upgrade
             except urllib3.exceptions.MaxRetryError as e:
                 logger.info(
@@ -1744,10 +1830,11 @@ class KubernetesExecutor(ClusterExecutor):
                     elif res.status.phase == "Succeeded":
                         # finished
                         j.callback(j.job)
-                        body = kubernetes.client.V1DeleteOptions()
-                        self.kubeapi.delete_namespaced_pod(
-                            j.jobid, self.namespace, body=body
+
+                        func = lambda: self.safe_delete_pod(
+                            j.jobid, ignore_not_found=True
                         )
+                        self._kubernetes_retry(func)
                     else:
                         # still active
                         still_running.append(j)
