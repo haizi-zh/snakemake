@@ -1,6 +1,6 @@
 __authors__ = ["Tobias Marschall", "Marcel Martin", "Johannes Köster"]
-__copyright__ = "Copyright 2015-2020, Johannes Köster"
-__email__ = "koester@jimmy.harvard.edu"
+__copyright__ = "Copyright 2021, Johannes Köster"
+__email__ = "johannes.koester@uni-due.de"
 __license__ = "MIT"
 
 import os
@@ -122,7 +122,12 @@ def test_coin_solver():
 def test_directory():
     run(
         dpath("test_directory"),
-        targets=["downstream", "symlinked_input", "child_to_input"],
+        targets=[
+            "downstream",
+            "symlinked_input",
+            "child_to_input",
+            "not_child_to_other",
+        ],
     )
     run(dpath("test_directory"), targets=["file_expecting_dir"], shouldfail=True)
     run(dpath("test_directory"), targets=["dir_expecting_file"], shouldfail=True)
@@ -277,6 +282,10 @@ def test_srcdir():
 
 def test_multiple_includes():
     run(dpath("test_multiple_includes"))
+
+
+def test_name_override():
+    run(dpath("test_name_override"))
 
 
 def test_yaml_config():
@@ -990,13 +999,22 @@ def test_github_issue105():
     run(dpath("test_github_issue105"))
 
 
+def test_github_issue413():
+    run(dpath("test_github_issue413"), no_tmpdir=True)
+
+
+@skip_on_windows
+def test_github_issue627():
+    run(dpath("test_github_issue627"))
+
+
 def test_github_issue727():
     run(dpath("test_github_issue727"))
 
 
 def test_output_file_cache():
     test_path = dpath("test_output_file_cache")
-    os.environ["SNAKEMAKE_OUTPUT_CACHE"] = os.path.join(test_path, "cache")
+    os.environ["SNAKEMAKE_OUTPUT_CACHE"] = "cache"
     run(test_path, cache=["a", "b"])
     run(test_path, cache=["invalid_multi"], targets="invalid1.txt", shouldfail=True)
 
@@ -1105,7 +1123,7 @@ def test_metadata_migration():
     # generate artificial incomplete metadata in v1 format for migration
     with open(
         metapath
-        / "eXZlcnl2ZXJ5dmVyeXZlcnl2ZXJ5dmVyeXZlcnl2ZXJ5dmVyeWxvbmcvcGF0aC50eHQ\=",
+        / "eXZlcnl2ZXJ5dmVyeXZlcnl2ZXJ5dmVyeXZlcnl2ZXJ5dmVyeWxvbmcvcGF0aC50eHQ=",
         "w",
     ) as meta:
         print('{"incomplete": true, "external_jobid": null}', file=meta)
@@ -1115,3 +1133,37 @@ def test_metadata_migration():
     # run workflow, incomplete v1 metadata should be migrated and trigger rerun of the rule,
     # which will save different data than the output contained in the git repo.
     run(dpath("test_metadata_migration"), force_incomplete=True)
+
+
+def test_paramspace():
+    run(dpath("test_paramspace"))
+
+
+def test_github_issue806():
+    run(dpath("test_github_issue806"), config=dict(src_lang="es", trg_lang="en"))
+
+
+@skip_on_windows
+def test_containerized():
+    run(dpath("test_containerized"), use_conda=True, use_singularity=True)
+
+
+def test_long_shell():
+    run(dpath("test_long_shell"))
+
+
+def test_modules_all():
+    run(dpath("test_modules_all"), targets=["a"])
+
+
+def test_modules_specific():
+    run(dpath("test_modules_specific"), targets=["test_a"])
+
+
+@skip_on_windows  # works in principle but the test framework modifies the target path separator
+def test_modules_meta_wrapper():
+    run(dpath("test_modules_meta_wrapper"), targets=["mapped/a.bam.bai"], dryrun=True)
+
+
+def test_use_rule_same_module():
+    run(dpath("test_use_rule_same_module"), targets=["test.out", "test2.out"])

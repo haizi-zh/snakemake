@@ -1,3 +1,74 @@
+[6.0.2] - 2021-03-03
+====================
+- Fix race condition in conda checking code (@johanneskoester).
+
+[6.0.1] - 2021-03-03
+====================
+- Restored Python 3.5 compatibility by removing f-strings (@mbhall88)
+- Fix rendering issue in the docs.
+- Add gitpod dev environment and gitpod environment for the tutorial.
+
+[6.0.0] - 2021-02-26
+====================
+- Introduced a new module system, see https://snakemake.readthedocs.io/en/stable/snakefiles/modularization.html#modules (@johanneskoester).
+- Introduced a rule inheritance mechanism, see https://snakemake.readthedocs.io/en/stable/snakefiles/rules.html#rule-inheritance (@johanneskoester).
+- Automatically containerize a conda-based pipeline with ``--containerize``, see https://snakemake.readthedocs.io/en/stable/snakefiles/deployment.html#containerization-of-conda-based-workflows (@johanneskoester).
+- Use temporary files for long shell commands (@epruesse).
+- Various fixes in the documentation (@ctb, @SilasK, @EthanHolleman).
+- Fixed a bug in job grouping that led to non-deterministic behavior (@johanneskoester).
+
+
+[5.32.2] - 2021-02-11
+=====================
+Changed
+-------
+- Fixed infinite loading of results in Snakemake reports (@FelixMoelder)
+
+
+[5.32.1] - 2021-02-08
+=====================
+Changed
+-------
+- Improved warning on wildcard constraints (@jheuel)
+- Improved logging from the new scheduler implementation (@johanneskoester)
+- Restored Python 3.5 compatibility by removing f-strings (@mbhall88)
+- Snakemake now automatically adds a global wildcard constraint for {scatteritem}, when scatter/gather support is used.
+- The zip variant of Snakemake reports is now compressed (@FelixMoelder).
+- Improved docs (@ctb).
+- Make output file removal in cluster mode more robust (@sebschmi).
+
+
+[5.32.0] - 2021-01-15
+=====================
+Changed
+-------
+- Handle accidental use of GLS backend with singularity (@vsoch).
+- Improved and extended WMS-monitor implementation (@vsoch).
+- Display index and total count in ``{scatteritem}`` when using the scatter-gather helper (@johanneskoester).
+- Fixed problems with jobid display when handling checkpoint updates (@johanneskoester, @jmeppley).
+- Fixed bug when checking for directory containment of output files (@jmeppley).
+- Implement --no-subworkflows treatment in combination with --cluster (@goi42).
+
+[5.31.1] - 2020-12-21
+=====================
+Changed
+-------
+- added wget again to the container image
+
+[5.31.0] - 2020-12-21
+=====================
+Added
+-----
+- The ``Paramspace`` helper for automatically exploring parameter spaces given as Pandas dataframes.
+- A new directive ``name:`` for setting rule names from variables.
+
+Changed
+-------
+- Various small bug fixes for scheduling and checkpoint handling.
+- Automatically block R_LIBS, PYTHONPATH, PERL5LIB, and PERLLIB when using conda with --use-conda. This behavior can be deactivated with --conda-not-block-envvars.
+- Update container image to latest singularity.
+
+
 [5.30.2] - 2020-12-16
 =====================
 Changed

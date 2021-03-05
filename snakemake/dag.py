@@ -1,6 +1,6 @@
 __author__ = "Johannes Köster"
-__copyright__ = "Copyright 2015-2019, Johannes Köster"
-__email__ = "koester@jimmy.harvard.edu"
+__copyright__ = "Copyright 2021, Johannes Köster"
+__email__ = "johannes.koester@uni-due.de"
 __license__ = "MIT"
 
 import html
@@ -127,6 +127,7 @@ class DAG:
         self._progress = 0
         self._group = dict()
         self._n_until_ready = defaultdict(int)
+        self._running = set()
 
         self.job_factory = JobFactory()
         self.group_job_factory = GroupJobFactory()
@@ -188,6 +189,8 @@ class DAG:
 
         self.cleanup()
 
+        self.check_incomplete()
+
         self.update_needrun(create_inventory=True)
         self.set_until_jobs()
         self.delete_omitfrom_jobs()
@@ -202,12 +205,7 @@ class DAG:
     def check_directory_outputs(self):
         """Check that no output file is contained in a directory output of the same or another rule."""
         outputs = sorted(
-            {
-                (path(f), job)
-                for job in self.jobs
-                for f in job.output
-                for path in (os.path.abspath, os.path.realpath)
-            }
+            {(os.path.abspath(f), job) for job in self.jobs for f in job.output}
         )
         for i in range(len(outputs) - 1):
             (a, job_a), (b, job_b) = outputs[i : i + 2]
@@ -281,7 +279,7 @@ class DAG:
                 simg = self.container_imgs[simg_url]
             env = conda.Env(
                 env_file,
-                self,
+                self.workflow,
                 container_img=simg,
                 cleanup=self.workflow.conda_cleanup_pkgs,
             )
@@ -295,10 +293,14 @@ class DAG:
     def pull_container_imgs(self, dryrun=False, forceall=False, quiet=False):
         # First deduplicate based on job.conda_env_file
         jobs = self.jobs if forceall else self.needrun_jobs
-        img_set = {job.container_img_url for job in jobs if job.container_img_url}
+        img_set = {
+            (job.container_img_url, job.is_containerized)
+            for job in jobs
+            if job.container_img_url
+        }
 
-        for img_url in img_set:
-            img = singularity.Image(img_url, self)
+        for img_url, is_containerized in img_set:
+            img = singularity.Image(img_url, self, is_containerized)
             if not dryrun or not quiet:
                 img.pull(dryrun)
             self.container_imgs[img_url] = img
@@ -485,7 +487,8 @@ class DAG:
                 raise MissingOutputException(
                     str(e) + "\nThis might be due to "
                     "filesystem latency. If that is the case, consider to increase the "
-                    "wait time with --latency-wait." + f"\nJob id: {job.jobid}",
+                    "wait time with --latency-wait."
+                    + "\nJob id: {jobid}".format(jobid=job.jobid),
                     rule=job.rule,
                     jobid=self.jobid(job),
                 )
@@ -976,6 +979,7 @@ class DAG:
 
         _needrun.clear()
         _n_until_ready.clear()
+        self._ready_jobs.clear()
         candidates = list(self.jobs)
 
         # Update the output mintime of all jobs.
@@ -1112,11 +1116,13 @@ class DAG:
 
     def _update_group_components(self):
         # span connected components if requested
-        for groupid, conn_components in groupby(
-            set(self._group.values()), key=lambda group: group.groupid
-        ):
+        groups_by_id = defaultdict(set)
+        for group in self._group.values():
+            groups_by_id[group.groupid].add(group)
+        for groupid, conn_components in groups_by_id.items():
             n_components = self.workflow.group_components.get(groupid, 1)
             if n_components > 1:
+                print(n_components)
                 for chunk in group_into_chunks(n_components, conn_components):
                     if len(chunk) > 1:
                         primary = chunk[0]
@@ -1137,8 +1143,8 @@ class DAG:
         potential_new_ready_jobs = False
         candidate_groups = set()
         for job in jobs:
-            if job in self._ready_jobs:
-                # job has been seen before, no need to process again
+            if job in self._ready_jobs or job in self._running:
+                # job has been seen before or is running, no need to process again
                 continue
             if not self.finished(job) and self._ready(job):
                 potential_new_ready_jobs = True
@@ -1291,7 +1297,7 @@ class DAG:
                 depending = list(self.depending[job])
                 # re-evaluate depending jobs, replace and update DAG
                 for j in depending:
-                    logger.info("Updating job {} ({}).".format(self.jobid(j), j))
+                    logger.info("Updating job {}.".format(j))
                     newjob = j.updated()
                     self.replace_job(j, newjob, recursive=False)
                     updated = True
@@ -1299,9 +1305,21 @@ class DAG:
             self.postprocess()
         return updated
 
+    def register_running(self, jobs):
+        self._running.update(jobs)
+        self._ready_jobs -= jobs
+        for job in jobs:
+            try:
+                del self._n_until_ready[job]
+            except KeyError:
+                # already gone
+                pass
+
     def finish(self, job, update_dynamic=True):
         """Finish a given job (e.g. remove from ready jobs, mark depending jobs
         as ready)."""
+
+        self._running.remove(job)
 
         # turn off this job's Reason
         self.reason(job).mark_finished()
@@ -1322,16 +1340,19 @@ class DAG:
         if update_dynamic:
             updated_dag = self.update_checkpoint_dependencies(jobs)
 
-        # mark depending jobs as ready
-        # skip jobs that are marked as until jobs
         depending = [
             j
             for job in jobs
             for j in self.depending[job]
             if not self.in_until(job) and self.needrun(j)
         ]
-        for job in depending:
-            self._n_until_ready[job] -= 1
+
+        if not updated_dag:
+            # Mark depending jobs as ready.
+            # Skip jobs that are marked as until jobs.
+            # This is not necessary if the DAG has been fully updated above.
+            for job in depending:
+                self._n_until_ready[job] -= 1
 
         potential_new_ready_jobs = self.update_ready(depending)
 
@@ -1458,6 +1479,8 @@ class DAG:
             self._dynamic.remove(job)
         if job in self._ready_jobs:
             self._ready_jobs.remove(job)
+        if job in self._n_until_ready:
+            del self._n_until_ready[job]
         # remove from cache
         for f in job.output:
             try:
@@ -1468,12 +1491,14 @@ class DAG:
     def replace_job(self, job, newjob, recursive=True):
         """Replace given job with new job."""
         add_to_targetjobs = job in self.targetjobs
+        jobid = self.jobid(job)
 
         depending = list(self.depending[job].items())
         if self.finished(job):
             self._finished.add(newjob)
 
         self.delete_job(job, recursive=recursive)
+        self._jobid[newjob] = jobid
 
         if add_to_targetjobs:
             self.targetjobs.add(newjob)

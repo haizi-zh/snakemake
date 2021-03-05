@@ -1,6 +1,6 @@
 __author__ = "Johannes Köster"
-__copyright__ = "Copyright 2015-2020, Johannes Köster"
-__email__ = "koester@jimmy.harvard.edu"
+__copyright__ = "Copyright 2021, Johannes Köster"
+__email__ = "johannes.koester@uni-due.de"
 __license__ = "MIT"
 
 import os
@@ -339,6 +339,10 @@ class Job(AbstractJob):
     @property
     def container_img_url(self):
         return self.rule.container_img
+
+    @property
+    def is_containerized(self):
+        return self.rule.is_containerized
 
     @property
     def container_img(self):
@@ -1493,7 +1497,7 @@ class Reason:
                     )
         s = "; ".join(s)
         if self.finished:
-            return f"Finished (was: {s})"
+            return "Finished (was: {s})".format(s=s)
         return s
 
     def __bool__(self):

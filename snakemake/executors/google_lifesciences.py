@@ -1,6 +1,6 @@
 __author__ = "Johannes Köster"
-__copyright__ = "Copyright 2015-2020, Johannes Köster"
-__email__ = "koester@jimmy.harvard.edu"
+__copyright__ = "Copyright 2021, Johannes Köster"
+__email__ = "johannes.koester@uni-due.de"
 __license__ = "MIT"
 
 import logging
@@ -70,18 +70,13 @@ class GoogleLifeSciencesExecutor(ClusterExecutor):
         # Prepare workflow sources for build package
         self._set_workflow_sources()
 
-        exec_job = (
-            exec_job
-            or (
-                "snakemake {target} --snakefile %s "
-                "--force -j{cores} --keep-target-files --keep-remote "
-                "--latency-wait {latency_wait} --scheduler {workflow.scheduler_type} "
-                "--attempt 1 {use_threads} --max-inventory-time 0 "
-                "{overwrite_config} {rules} --nocolor "
-                "--notemp --no-hooks --nolock " % self.snakefile
-            )
-            + self.get_set_threads_args()
-            + self.get_set_scatter_args()
+        exec_job = exec_job or (
+            "snakemake {target} --snakefile %s "
+            "--force -j{cores} --keep-target-files --keep-remote "
+            "--latency-wait {latency_wait} --scheduler {workflow.scheduler_type} "
+            "--attempt 1 {use_threads} --max-inventory-time 0 "
+            "{overwrite_config} {rules} --nocolor "
+            "--notemp --no-hooks --nolock " % self.snakefile
         )
 
         # Set preemptible instances
@@ -794,9 +789,10 @@ class GoogleLifeSciencesExecutor(ClusterExecutor):
         # capabilities - this won't currently work (Singularity in Docker)
         # We either need to add CAPS or run in privileged mode (ehh)
         if job.needs_singularity and self.workflow.use_singularity:
-            logger.warning(
+            raise WorkflowError(
                 "Singularity requires additional capabilities that "
-                "aren't yet supported for standard Docker runs."
+                "aren't yet supported for standard Docker runs, and "
+                "is not supported for the Google Life Sciences executor."
             )
 
         # location looks like: "projects/<project>/locations/<location>"
