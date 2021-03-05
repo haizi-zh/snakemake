@@ -59,7 +59,7 @@ class Snakemake:
         self.bench_iteration = bench_iteration
         self.scriptdir = scriptdir
 
-    def log_fmt_shell(self, stdout=True, stderr=True, append=False):
+    def log_fmt_shell(self, stdout=True, stderr=True, append=False, tee=False):
         """
         Return a shell redirection string to be used in `shell()` calls
 
@@ -82,8 +82,14 @@ class Snakemake:
             multiple commands to the same log. Note however that the log will
             not be truncated at the start.
 
+        tee : bool
+            If true, send stdout/stderr to log through tee, rather than doing so
+            using simple IO redirection. Sometimes, it may be favorable to have
+            log files while keeping messages to stdout/stderr as well.
+
         The following table describes the output:
 
+        standard:
         -------- -------- -------- ----- -------------
         stdout   stderr   append   log   return value
         -------- -------- -------- ----- ------------
@@ -95,17 +101,41 @@ class Snakemake:
         False    True     False    fn    2> fn
         any      any      any      None  ""
         -------- -------- -------- ----- -----------
+
+        tee:
+        -------- -------- -------- ----- -------------
+        stdout   stderr   append   log   return value
+        -------- -------- -------- ----- ------------
+        True     True     True     fn    2>&1 | tee -a fn
+        True     False    True     fn    | tee -a fn
+        False    True     True     fn    2> >(tee -a fn >&2)
+        True     True     False    fn    2>&1 | tee fn
+        True     False    False    fn    | tee fn
+        False    True     False    fn    2> >(tee fn >&2)
+        any      any      any      None  ""
+        -------- -------- -------- ----- -----------
         """
         if not self.log:
             return ""
-        lookup = {
-            (True, True, True): " >> {0} 2>&1",
-            (True, False, True): " >> {0}",
-            (False, True, True): " 2>> {0}",
-            (True, True, False): " > {0} 2>&1",
-            (True, False, False): " > {0}",
-            (False, True, False): " 2> {0}",
-        }
+
+        if tee:
+            lookup = {
+                (True, True, True): " 2>&1 | tee -a {0}",
+                (True, False, True): " | tee -a {0}",
+                (False, True, True): " 2> >(tee -a {0} >&2)",
+                (True, True, False): " 2>&1 | tee {0}",
+                (True, False, False): " | tee {0}",
+                (False, True, False): " 2> >(tee {0} >&2)",
+            }
+        else:
+            lookup = {
+                (True, True, True): " >> {0} 2>&1",
+                (True, False, True): " >> {0}",
+                (False, True, True): " 2>> {0}",
+                (True, True, False): " > {0} 2>&1",
+                (True, False, False): " > {0}",
+                (False, True, False): " 2> {0}",
+            }
         return lookup[(stdout, stderr, append)].format(self.log)
 
 
